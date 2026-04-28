@@ -8,7 +8,7 @@ import hashlib
 import json
 import random
 import httpx
-import string
+import re
 from datetime import datetime, date
 from typing import Optional
 from app.core.database import db
@@ -17,6 +17,19 @@ from app.config import get_settings
 
 settings = get_settings()
 OLLAMA_URL = settings.ollama_base_url
+
+
+def _clean_text(text: str) -> str:
+    """清洗文本中的非法字符和乱码，保证 UTF-8 完整性"""
+    if not text:
+        return ""
+    # 移除控制字符（换行 TAB 回车保留）
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    # 将连续的非可见 ASCII 乱码替换为 ?
+    text = re.sub(r'[\x80-\xff]{2,}', lambda m: '?' * len(m.group()), text)
+    # 移除孤立的高代理或低代理
+    text = re.sub(r'[\ud800-\udfff]', '', text)
+    return text.strip()
 
 
 class DeepReviewEngine:
@@ -251,11 +264,11 @@ class DeepReviewEngine:
 
     async def _generate_questions(self, entity: dict, context: dict) -> list:
         """生成挑战性问题"""
-        entity_label = entity.get("label", "")
-        entity_desc = entity.get("description", "")
+        entity_label = _clean_text(entity.get("label", ""))
+        entity_desc = _clean_text(entity.get("description", ""))
 
-        prerequisites = [p for p in (context.get("prerequisites") or []) if p.get("label")]
-        siblings = [s for s in (context.get("siblings") or []) if s.get("label")]
+        prerequisites = [_clean_text(p.get("label", "")) for p in (context.get("prerequisites") or []) if p.get("label")]
+        siblings = [_clean_text(s.get("label", "")) for s in (context.get("siblings") or []) if s.get("label")]
 
         prompt = f"""针对「{entity_label}」这个概念生成3个深度理解问题。
 
@@ -524,6 +537,10 @@ class DeepReviewEngine:
 
     async def _generate_answer_hint(self, entity_label: str, entity_desc: str, question_text: str, question_type: str) -> str:
         """针对缺失 answer_hint 的旧卡片，实时生成参考答案（使用 MiniMax）"""
+        entity_label = _clean_text(entity_label)
+        entity_desc = _clean_text(entity_desc)
+        question_text = _clean_text(question_text)
+
         system_prompt = "你是一个专业的知识讲解助手，擅长用清晰、准确的语言解释概念。回答时只输出答案，不要任何前缀说明。"
         prompt = f"""针对概念「{entity_label}」（描述：{entity_desc}）的问题「{question_text}」，生成一个完整、清晰的参考答案。
 
@@ -634,10 +651,13 @@ class DeepReviewEngine:
                 question_type=question.get("type", "")
             )
 
-        prompt = f"""概念：{d.get('entity_label')}
-描述：{d.get('entity_description')}
+        entity_label = _clean_text(d.get("entity_label", ""))
+        entity_desc = _clean_text(d.get("entity_description", ""))
+        question_text = _clean_text(question.get("question", ""))
+        prompt = f"""概念：{entity_label}
+描述：{entity_desc}
 
-问题：{question.get('question')}
+问题：{question_text}
 参考回答：{stored_hint}
 
 用户回答：{user_answer}
