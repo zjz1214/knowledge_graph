@@ -38,30 +38,32 @@ class DeepReviewEngine:
         await self.generate_batch(category, limit - existing)
 
     async def get_pregenerated_count(self, category: str = None) -> int:
-        """获取已预生成的内容数量"""
+        """获取已预生成的内容数量（排除已删除的）"""
         if category:
             query = """
             MATCH (d:DeepReview)
             WHERE d.entity_category = $category
+            AND d.is_deleted = false
             RETURN count(d) AS count
             """
             results = await db.execute_query(query, {"category": category})
         else:
-            query = "MATCH (d:DeepReview) RETURN count(d) AS count"
+            query = "MATCH (d:DeepReview) WHERE d.is_deleted = false RETURN count(d) AS count"
             results = await db.execute_query(query)
 
         return results[0]["count"] if results else 0
 
     async def get_pregenerated_session(self, category: str = None, limit: int = 10) -> list:
         """
-        获取预生成的复习会话
+        获取预生成的复习会话（排除已删除的）
         """
         if category:
             query = """
             MATCH (d:DeepReview)
             WHERE d.entity_category = $category
+            AND d.is_deleted = false
             AND d.is_favorited = true
-            RETURN d
+            RETURN d.id AS id, d
             ORDER BY d.created_at DESC
             LIMIT $limit
             """
@@ -69,8 +71,9 @@ class DeepReviewEngine:
         else:
             query = """
             MATCH (d:DeepReview)
-            WHERE d.is_favorited = true
-            RETURN d
+            WHERE d.is_deleted = false
+            AND d.is_favorited = true
+            RETURN d.id AS id, d
             ORDER BY d.created_at DESC
             LIMIT $limit
             """
@@ -82,7 +85,8 @@ class DeepReviewEngine:
                 query = """
                 MATCH (d:DeepReview)
                 WHERE d.entity_category = $category
-                RETURN d
+                AND d.is_deleted = false
+                RETURN d.id AS id, d
                 ORDER BY d.importance_score DESC, d.created_at DESC
                 LIMIT $limit
                 """
@@ -90,18 +94,19 @@ class DeepReviewEngine:
             else:
                 query = """
                 MATCH (d:DeepReview)
-                RETURN d
+                WHERE d.is_deleted = false
+                RETURN d.id AS id, d
                 ORDER BY d.importance_score DESC, d.created_at DESC
                 LIMIT $limit
                 """
                 results = await db.execute_query(query, {"limit": limit}) or []
 
-        return [self._parse_deep_review(r["d"]) for r in results]
+        return [self._parse_deep_review(r["d"], r.get("id")) for r in results]
 
-    def _parse_deep_review(self, d: dict) -> dict:
+    def _parse_deep_review(self, d: dict, review_id: str = None) -> dict:
         """解析预生成的复习内容"""
         return {
-            "id": d.get("id"),
+            "id": review_id or d.get("id"),
             "entity_id": d.get("entity_id"),
             "entity_label": d.get("entity_label"),
             "entity_description": d.get("entity_description"),

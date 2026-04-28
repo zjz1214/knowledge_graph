@@ -204,8 +204,46 @@ FSRS（Free Spaced Repetition Scheduler）核心公式：
 
 每次复习后更新 S 和 D，下一次复习间隔 = f(S, D, rating)。
 
-## 开发备忘
+## 版本控制流程
 
-- Notion 导入包含硬编码 token（import_notion_full.py）
-- 测试目录为空，暂无自动化测试
-- `thoughts.md` 包含开发 TODO（多网络分割、Onenote 导入等）
+采用 **Trunk-Based Development**（单分支流），适合个人项目：
+
+### 分支策略
+- `master` - 稳定代码，始终可部署
+- 功能开发直接在 master 上进行，频繁提交
+
+### 提交规范
+```
+<类型>: <简短描述>
+
+可选的详细说明
+
+类型: feat | fix | docs | refactor | test | chore
+```
+
+### 开发流程
+```bash
+# 1. 开始新功能或修复
+git checkout master
+git pull origin master
+
+# 2. 开发，频繁提交
+git add .
+git commit -m "feat: 添加新功能"
+
+# 3. 推送到远程
+git push origin master
+```
+
+### 禁止操作
+- **禁止** `git push --force` 到 master（除非修复敏感信息泄露）
+- **禁止** 提交 `.env`、密钥、token
+- **禁止** 在 commit message 中包含真实 API Key
+
+### 修复敏感信息泄露流程
+若意外提交了密钥，执行：
+```bash
+git filter-repo --path <file> --invert-paths --force
+git push --force
+```
+然后在 GitHub 设置页解除对该 secret 的警报。
