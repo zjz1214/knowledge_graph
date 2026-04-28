@@ -99,19 +99,7 @@
 <body>
     <div class="container">
         <div class="sidebar">
-            <h2 style="font-size: 18px; margin-bottom: 20px;">📚 知识复习</h2>
-            <div class="stats">
-                <div class="stat-box">
-                    <div class="value" id="totalCards">-</div>
-                    <div class="label">总卡片</div>
-                </div>
-                <div class="stat-box">
-                    <div class="value" id="dueCards">-</div>
-                    <div class="label">待复习</div>
-                </div>
-            </div>
-
-            <div class="section-title">🎯 深度理解测试</div>
+            <div class="section-title">深度理解测试</div>
             <div id="deepReviewPanel" class="deep-review-panel active">
                 <div id="deepReviewList">
                     <div class="loading">加载中...</div>
@@ -163,18 +151,8 @@
 
         // Load initial data
         async function init() {
-            await loadStats();
             await loadGraph();
             await loadDeepReviewQueue();
-        }
-
-        async function loadStats() {
-            try {
-                const res = await fetch(`${API_BASE}/deep-review/stats`);
-                const stats = await res.json();
-                document.getElementById('totalCards').textContent = stats.total_pregenerated || 0;
-                document.getElementById('dueCards').textContent = stats.total_pregenerated || 0;
-            } catch (e) { console.error(e); }
         }
 
         let currentCategory = null;
@@ -644,7 +622,6 @@
                         </select>
                         <button onclick="triggerGeneration()" style="padding:8px 12px;background:#00b894;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:12px;">🔄</button>
                     </div>
-                    <div style="font-size:11px;color:#888;margin-bottom:8px;">📊 共 ${entities.length} 条预生成内容</div>
                     ${entities.map((e, i) => `
                         <div class="review-entity" onclick="showDeepReviewEntity(${i})">
                             <div class="review-entity-header">

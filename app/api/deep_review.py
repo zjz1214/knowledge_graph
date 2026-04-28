@@ -30,7 +30,6 @@ async def get_deep_review_session(category: str = None, limit: int = 10):
     获取 active 状态的复习会话
     """
     try:
-        await deep_review_engine.ensure_pregenerated(category, limit)
         sessions = await deep_review_engine.get_pregenerated_session(category, limit)
         return {"entities": sessions}
     except Exception as e:

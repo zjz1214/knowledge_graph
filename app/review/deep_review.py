@@ -58,7 +58,7 @@ class DeepReviewEngine:
 
     async def get_pregenerated_session(self, category: str = None, limit: int = 10) -> list:
         """
-        获取 active 状态的复习会话
+        获取 active 状态的复习会话，收藏置顶，其余按重要性排序
         """
         status_filter = "(d.review_status = 'active' OR d.review_status IS NULL)"
 
@@ -67,9 +67,8 @@ class DeepReviewEngine:
             MATCH (d:DeepReview)
             WHERE d.entity_category = $category
             AND {status_filter}
-            AND d.is_favorited = true
             RETURN d.id AS id, d
-            ORDER BY d.created_at DESC
+            ORDER BY d.is_favorited DESC, d.importance_score DESC, d.created_at DESC
             LIMIT $limit
             """
             results = await db.execute_query(query, {"category": category, "limit": limit}) or []
@@ -77,34 +76,11 @@ class DeepReviewEngine:
             query = f"""
             MATCH (d:DeepReview)
             WHERE {status_filter}
-            AND d.is_favorited = true
             RETURN d.id AS id, d
-            ORDER BY d.created_at DESC
+            ORDER BY d.is_favorited DESC, d.importance_score DESC, d.created_at DESC
             LIMIT $limit
             """
             results = await db.execute_query(query, {"limit": limit}) or []
-
-        # 如果没有收藏的，返回全部 active 内容
-        if not results:
-            if category:
-                query = f"""
-                MATCH (d:DeepReview)
-                WHERE d.entity_category = $category
-                AND {status_filter}
-                RETURN d.id AS id, d
-                ORDER BY d.importance_score DESC, d.created_at DESC
-                LIMIT $limit
-                """
-                results = await db.execute_query(query, {"category": category, "limit": limit}) or []
-            else:
-                query = f"""
-                MATCH (d:DeepReview)
-                WHERE {status_filter}
-                RETURN d.id AS id, d
-                ORDER BY d.importance_score DESC, d.created_at DESC
-                LIMIT $limit
-                """
-                results = await db.execute_query(query, {"limit": limit}) or []
 
         return [self._parse_deep_review(r["d"], r.get("id")) for r in results]
 
