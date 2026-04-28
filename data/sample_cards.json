@@ -1,0 +1,27 @@
+[
+  {
+    "question": "什么是 RAG？",
+    "answer": "Retrieval-Augmented Generation，检索增强生成。通过从外部知识库检索相关信息来增强 LLM 的生成能力，减少幻觉。",
+    "tags": ["AI", "RAG"]
+  },
+  {
+    "question": "GraphRAG 相比 Naive RAG 的优势是什么？",
+    "answer": "Naive RAG 以固定 chunk 检索，无法捕捉跨文档关系。GraphRAG 通过构建实体-关系图，能回答全局性问题（如「这个知识库的主题是什么」），并通过社区检测实现层次化理解。",
+    "tags": ["AI", "GraphRAG"]
+  },
+  {
+    "question": "FSRS 算法的核心思想？",
+    "answer": "基于记忆的遗忘曲线建模。稳定性(S)越高，记忆保持越久。通过每次复习的评分（忘记/模糊/记住/完全记住）动态调整 S 和 D（难度），计算出最优复习间隔。",
+    "tags": ["学习方法", "FSRS"]
+  },
+  {
+    "question": "Neo4j 向量索引的作用？",
+    "answer": "在图数据库中直接存储和检索向量 embedding。使得 Cypher 查询可以结合向量相似度，实现「找相似的实体」等操作，无需单独的向量数据库。",
+    "tags": ["Neo4j", "向量搜索"]
+  },
+  {
+    "question": "什么情况下该用 Local Search vs Global Search？",
+    "answer": "Local Search：回答具体问题，找特定知识点。Global Search：回答需要综合理解的全局问题，如「这个领域的核心概念有哪些」。",
+    "tags": ["GraphRAG", "搜索"]
+  }
+]
