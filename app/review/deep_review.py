@@ -521,6 +521,30 @@ class DeepReviewEngine:
         results = await db.execute_query(query, {"entity_id": entity_id}) or []
         return [self._parse_deep_review(r["d"], r.get("id")) for r in results]
 
+    async def _generate_answer_hint(self, entity_label: str, entity_desc: str, question_text: str, question_type: str) -> str:
+        """针对缺失 answer_hint 的旧卡片，实时生成参考答案"""
+        prompt = f"""针对概念「{entity_label}」（描述：{entity_desc}）的问题「{question_text}」，生成一个完整、清晰的参考答案。
+
+要求：
+- 包含该概念的关键要点（what/why/how）
+- 如果是区别类问题，说明与易混淆概念的区分点
+- 如果是联系类问题，说明与其他概念的关系和原因
+- 如果是原理类问题，说明工作机制或核心逻辑
+- 长度约 100-150 字
+- 只返回参考答案文本，不需要其他说明"""
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    f"{OLLAMA_URL}/api/generate",
+                    json={"model": self.ollama_model, "prompt": prompt, "stream": False}
+                )
+                result = response.json()
+                text = result.get("response", "").strip()
+                return text if text else "（暂无参考答案）"
+        except Exception as e:
+            return f"（参考答案生成失败：{e}）"
+
     async def toggle_favorite(self, review_id: str) -> bool:
         """切换收藏状态"""
         query = """
@@ -601,12 +625,22 @@ class DeepReviewEngine:
             return {"error": "问题不存在"}
 
         question = questions[question_index]
+        stored_hint = question.get("answer_hint", "")
+
+        # 如果没有参考答案，实时生成
+        if not stored_hint:
+            stored_hint = await self._generate_answer_hint(
+                entity_label=d.get("entity_label", ""),
+                entity_desc=d.get("entity_description", ""),
+                question_text=question.get("question", ""),
+                question_type=question.get("type", "")
+            )
 
         prompt = f"""概念：{d.get('entity_label')}
 描述：{d.get('entity_description')}
 
 问题：{question.get('question')}
-参考回答：{question.get('answer_hint', '无')}
+参考回答：{stored_hint}
 
 用户回答：{user_answer}
 
@@ -639,7 +673,7 @@ class DeepReviewEngine:
                 evaluation = self._parse_feedback(text)
                 score = evaluation.get("score", 5)
                 feedback_summary = evaluation.get("summary", "")
-                evaluation["answer_hint"] = question.get("answer_hint", "")
+                evaluation["answer_hint"] = stored_hint
                 # 记录历史
                 await self.record_review_event(
                     review_id=review_id,
