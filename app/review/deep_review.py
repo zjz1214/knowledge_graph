@@ -279,23 +279,24 @@ class DeepReviewEngine:
 易混淆概念：{chr(10).join([f"- {s['label']}" for s in siblings[:3]]) if siblings else "无"}
 
 要求：问题类型包括区别类、联系类、原理类各一个。
+每个 answer_hint 应该是对该问题的完整、清晰回答，包含：关键要点（what/why/how）、常见误区、与前置基础和易混淆概念的区分点。回答长度约 100-200 字。
 输出JSON格式：
 {{
   "questions": [
     {{
       "type": "distinction",
       "question": "区别类问题",
-      "answer_hint": "参考答案"
+      "answer_hint": "完整的参考答案，包含与易混淆概念的对比和关键区分点"
     }},
     {{
       "type": "connection",
       "question": "联系类问题",
-      "answer_hint": "参考答案"
+      "answer_hint": "完整的参考答案，说明联系、关系及背后的原因"
     }},
     {{
       "type": "principle",
       "question": "原理类问题",
-      "answer_hint": "参考答案"
+      "answer_hint": "完整的参考答案，说明原理、工作机制或核心逻辑"
     }}
   ]
 }}
