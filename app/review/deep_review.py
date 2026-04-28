@@ -459,10 +459,11 @@ class DeepReviewEngine:
 描述：{d.get('entity_description')}
 
 问题：{question.get('question')}
+参考回答：{question.get('answer_hint', '无')}
 
 用户回答：{user_answer}
 
-请评估用户回答的质量（0-10分），指出逻辑断层或可深化的地方。
+请评估用户回答的质量（0-10分），与参考回答对比后指出逻辑断层或可深化的地方。
 输出JSON格式：
 {{
   "score": 评分数字,
@@ -486,9 +487,11 @@ class DeepReviewEngine:
                 )
                 result = response.json()
                 text = result.get("response", "")
-                return self._parse_feedback(text)
+                evaluation = self._parse_feedback(text)
+                evaluation["answer_hint"] = question.get("answer_hint", "")
+                return evaluation
         except Exception as e:
-            return {"score": 5, "feedback": [], "summary": f"评估服务暂时不可用: {e}"}
+            return {"score": 5, "feedback": [], "summary": f"评估服务暂时不可用: {e}", "answer_hint": question.get("answer_hint", "")}
 
     def _parse_feedback(self, text: str) -> dict:
         """解析反馈 JSON"""
