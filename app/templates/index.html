@@ -841,31 +841,37 @@
                 const score = data.score || 5;
                 const scoreColor = score >= 7 ? '#00b894' : score >= 4 ? '#fdcb6e' : '#e17055';
 
-                let feedbackHtml = `
-                    <div class="feedback-panel">
-                        <div class="feedback-score" style="color: ${scoreColor};">${score}/10</div>
-                        ${(data.answer_hint) ? `<div style="margin-top:8px;font-size:12px;color:#aaa;background:#1e1e2e;padding:8px;border-radius:4px;line-height:1.6;"><strong>参考回答：</strong><br>${escapeHtml(data.answer_hint || '')}</div>` : ''}
-                `;
+                let feedbackHtml = `<div class="feedback-panel">`;
 
+                // 1. 分数
+                feedbackHtml += `<div class="feedback-score" style="color: ${scoreColor}; font-size: 20px; text-align: center; margin-bottom: 12px;">${score}/10</div>`;
+
+                // 2. 建议（反馈项 + 总结）
+                feedbackHtml += `<div style="margin-bottom: 12px;">`;
                 if (Array.isArray(data.feedback) && data.feedback.length > 0) {
                     feedbackHtml += data.feedback.map(f => {
                         const item = (typeof f === 'object' && f !== null) ? f : {};
                         const typeLabel = item.type === 'gap' ? '逻辑断层' : item.type === 'misconception' ? '误解' : '表面化';
-                        const typeClass = item.type || 'gap';
-                        return `
-                        <div class="feedback-item">
-                            <span class="type ${typeClass}">${escapeHtml(typeLabel)}</span>
-                            <div class="point">${escapeHtml(item.point || '（无内容）')}</div>
-                            <div class="question">💭 ${escapeHtml(item.question || '')}</div>
+                        return `<div style="margin-bottom:8px;padding:8px;background:#252540;border-radius:4px;">
+                            <span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;background:#74b9ff;color:#fff;margin-bottom:4px;">${escapeHtml(typeLabel)}</span>
+                            <div style="font-size:12px;color:#ccc;line-height:1.5;">${escapeHtml(item.point || '（无内容）')}</div>
+                            ${item.question ? `<div style="font-size:11px;color:#00b894;margin-top:4px;">💭 ${escapeHtml(item.question)}</div>` : ''}
                         </div>`;
                     }).join('');
                 }
-
                 if (data.summary) {
-                    feedbackHtml += `<div style="margin-top:12px;font-size:12px;color:#888;line-height:1.6;">${escapeHtml(data.summary || '')}</div>`;
+                    feedbackHtml += `<div style="margin-top:8px;font-size:12px;color:#888;line-height:1.5;padding:8px;background:#1e1e2e;border-radius:4px;">${escapeHtml(data.summary || '')}</div>`;
+                }
+                feedbackHtml += `</div>`;
+
+                // 3. 参考答案
+                if (data.answer_hint) {
+                    feedbackHtml += `<div style="font-size:12px;color:#aaa;background:#1e1e2e;padding:10px;border-radius:4px;line-height:1.6;border-left:3px solid #6c5ce7;">
+                        <strong>参考答案：</strong><br>${escapeHtml(data.answer_hint || '')}
+                    </div>`;
                 }
 
-                feedbackHtml += '</div>';
+                feedbackHtml += `</div>`;
                 feedbackEl.innerHTML = feedbackHtml;
             } catch (e) {
                 console.error(e);
