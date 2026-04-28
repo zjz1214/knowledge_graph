@@ -6,12 +6,13 @@
 import asyncio
 import hashlib
 import json
-import httpx
 import random
+import httpx
 import string
 from datetime import datetime, date
 from typing import Optional
 from app.core.database import db
+from app.core.rag_engine import MiniMaxLLM
 from app.config import get_settings
 
 settings = get_settings()
@@ -522,7 +523,8 @@ class DeepReviewEngine:
         return [self._parse_deep_review(r["d"], r.get("id")) for r in results]
 
     async def _generate_answer_hint(self, entity_label: str, entity_desc: str, question_text: str, question_type: str) -> str:
-        """针对缺失 answer_hint 的旧卡片，实时生成参考答案"""
+        """针对缺失 answer_hint 的旧卡片，实时生成参考答案（使用 MiniMax）"""
+        system_prompt = "你是一个专业的知识讲解助手，擅长用清晰、准确的语言解释概念。回答时只输出答案，不要任何前缀说明。"
         prompt = f"""针对概念「{entity_label}」（描述：{entity_desc}）的问题「{question_text}」，生成一个完整、清晰的参考答案。
 
 要求：
@@ -530,18 +532,14 @@ class DeepReviewEngine:
 - 如果是区别类问题，说明与易混淆概念的区分点
 - 如果是联系类问题，说明与其他概念的关系和原因
 - 如果是原理类问题，说明工作机制或核心逻辑
-- 长度约 100-150 字
-- 只返回参考答案文本，不需要其他说明"""
+- 长度约 100-200 字
+- 只返回参考答案文本，不要加前缀如"参考答案："等"""
 
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.post(
-                    f"{OLLAMA_URL}/api/generate",
-                    json={"model": self.ollama_model, "prompt": prompt, "stream": False}
-                )
-                result = response.json()
-                text = result.get("response", "").strip()
-                return text if text else "（暂无参考答案）"
+            llm = MiniMaxLLM()
+            text = await llm.generate(prompt=prompt, system_prompt=system_prompt)
+            text = text.strip()
+            return text if text else "（暂无参考答案）"
         except Exception as e:
             return f"（参考答案生成失败：{e}）"
 
