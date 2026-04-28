@@ -4,8 +4,11 @@
 """
 
 import asyncio
+import hashlib
 import json
 import httpx
+import random
+import string
 from datetime import datetime, date
 from typing import Optional
 from app.core.database import db
@@ -38,30 +41,32 @@ class DeepReviewEngine:
         await self.generate_batch(category, limit - existing)
 
     async def get_pregenerated_count(self, category: str = None) -> int:
-        """获取已预生成的内容数量（排除已删除的）"""
+        """获取 active 状态的内容数量"""
         if category:
             query = """
             MATCH (d:DeepReview)
             WHERE d.entity_category = $category
-            AND d.is_deleted = false
+            AND (d.review_status = 'active' OR d.review_status IS NULL)
             RETURN count(d) AS count
             """
             results = await db.execute_query(query, {"category": category})
         else:
-            query = "MATCH (d:DeepReview) WHERE d.is_deleted = false RETURN count(d) AS count"
+            query = "MATCH (d:DeepReview) WHERE d.review_status = 'active' OR d.review_status IS NULL RETURN count(d) AS count"
             results = await db.execute_query(query)
 
         return results[0]["count"] if results else 0
 
     async def get_pregenerated_session(self, category: str = None, limit: int = 10) -> list:
         """
-        获取预生成的复习会话（排除已删除的）
+        获取 active 状态的复习会话
         """
+        status_filter = "(d.review_status = 'active' OR d.review_status IS NULL)"
+
         if category:
-            query = """
+            query = f"""
             MATCH (d:DeepReview)
             WHERE d.entity_category = $category
-            AND d.is_deleted = false
+            AND {status_filter}
             AND d.is_favorited = true
             RETURN d.id AS id, d
             ORDER BY d.created_at DESC
@@ -69,9 +74,9 @@ class DeepReviewEngine:
             """
             results = await db.execute_query(query, {"category": category, "limit": limit}) or []
         else:
-            query = """
+            query = f"""
             MATCH (d:DeepReview)
-            WHERE d.is_deleted = false
+            WHERE {status_filter}
             AND d.is_favorited = true
             RETURN d.id AS id, d
             ORDER BY d.created_at DESC
@@ -79,22 +84,22 @@ class DeepReviewEngine:
             """
             results = await db.execute_query(query, {"limit": limit}) or []
 
-        # 如果没有收藏的，返回全部预生成内容
+        # 如果没有收藏的，返回全部 active 内容
         if not results:
             if category:
-                query = """
+                query = f"""
                 MATCH (d:DeepReview)
                 WHERE d.entity_category = $category
-                AND d.is_deleted = false
+                AND {status_filter}
                 RETURN d.id AS id, d
                 ORDER BY d.importance_score DESC, d.created_at DESC
                 LIMIT $limit
                 """
                 results = await db.execute_query(query, {"category": category, "limit": limit}) or []
             else:
-                query = """
+                query = f"""
                 MATCH (d:DeepReview)
-                WHERE d.is_deleted = false
+                WHERE {status_filter}
                 RETURN d.id AS id, d
                 ORDER BY d.importance_score DESC, d.created_at DESC
                 LIMIT $limit
@@ -117,7 +122,11 @@ class DeepReviewEngine:
             "siblings": json.loads(d.get("siblings_json", "[]")),
             "questions": json.loads(d.get("questions_json", "[]")),
             "is_favorited": d.get("is_favorited", False),
-            "is_deleted": d.get("is_deleted", False),
+            "review_status": d.get("review_status", "active"),
+            "review_count": d.get("review_count", 0),
+            "last_score": d.get("last_score", 0.0),
+            "entity_hash": d.get("entity_hash", ""),
+            "generation_version": d.get("generation_version", 1),
             "created_at": d.get("created_at")
         }
 
@@ -332,6 +341,8 @@ class DeepReviewEngine:
         """存储预生成的复习内容"""
         prerequisites = [p for p in (context.get("prerequisites") or []) if p.get("label")]
         siblings = [s for s in (context.get("siblings") or []) if s.get("label")]
+        entity_desc = entity.get("description", "") or ""
+        entity_hash = hashlib.md5(entity_desc.encode()).hexdigest()
 
         query = """
         CREATE (d:DeepReview {
@@ -346,7 +357,11 @@ class DeepReviewEngine:
             siblings_json: $siblings_json,
             questions_json: $questions_json,
             is_favorited: false,
-            is_deleted: false,
+            review_status: 'active',
+            review_count: 0,
+            last_score: 0.0,
+            entity_hash: $entity_hash,
+            generation_version: 1,
             created_at: datetime()
         })
         """
@@ -354,16 +369,181 @@ class DeepReviewEngine:
             await db.execute_write(query, {
                 "entity_id": entity.get("entity_id"),
                 "entity_label": entity.get("label"),
-                "entity_description": entity.get("description", ""),
+                "entity_description": entity_desc,
                 "entity_type": entity.get("entity_type", "concept"),
                 "entity_category": entity.get("category"),
                 "importance_score": entity.get("importance_score", 0),
                 "prerequisites_json": json.dumps(prerequisites[:5], ensure_ascii=False),
                 "siblings_json": json.dumps(siblings[:5], ensure_ascii=False),
-                "questions_json": json.dumps(questions, ensure_ascii=False)
+                "questions_json": json.dumps(questions, ensure_ascii=False),
+                "entity_hash": entity_hash
             })
         except Exception as e:
             print(f"存储失败: {e}")
+
+    async def record_review_event(
+        self,
+        review_id: str,
+        question_index: int,
+        question_text: str,
+        user_answer: str,
+        score: float,
+        feedback_summary: str
+    ) -> bool:
+        """记录一次复习历史"""
+        query = """
+        MATCH (d:DeepReview {id: $review_id})
+        CREATE (h:ReviewHistory {
+            id: randomUuid(),
+            review_id: $review_id,
+            question_index: $question_index,
+            question_text: $question_text,
+            user_answer: $user_answer,
+            score: $score,
+            feedback_summary: $feedback_summary,
+            created_at: datetime()
+        })
+        CREATE (d)-[:HAS_HISTORY]->(h)
+        """
+        try:
+            await db.execute_write(query, {
+                "review_id": review_id,
+                "question_index": question_index,
+                "question_text": question_text,
+                "user_answer": user_answer,
+                "score": float(score),
+                "feedback_summary": feedback_summary
+            })
+            return True
+        except Exception as e:
+            print(f"记录历史失败: {e}")
+            return False
+
+    async def get_review_history(self, review_id: str) -> list:
+        """获取某卡片的完整复习历史"""
+        query = """
+        MATCH (d:DeepReview {id: $review_id})-[:HAS_HISTORY]->(h:ReviewHistory)
+        RETURN h
+        ORDER BY h.created_at DESC
+        """
+        results = await db.execute_query(query, {"review_id": review_id}) or []
+        return [self._parse_review_history(r["h"]) for r in results]
+
+    def _parse_review_history(self, h: dict) -> dict:
+        """解析复习历史记录"""
+        created = h.get("created_at")
+        if hasattr(created, "isoformat"):
+            created = created.isoformat()
+        return {
+            "id": h.get("id"),
+            "review_id": h.get("review_id"),
+            "question_index": h.get("question_index"),
+            "question_text": h.get("question_text"),
+            "user_answer": h.get("user_answer"),
+            "score": h.get("score", 0),
+            "feedback_summary": h.get("feedback_summary", ""),
+            "created_at": created
+        }
+
+    async def keep_review(self, review_id: str) -> bool:
+        """标记为保留"""
+        query = """
+        MATCH (d:DeepReview {id: $id})
+        SET d.review_status = 'kept'
+        """
+        try:
+            await db.execute_write(query, {"id": review_id})
+            return True
+        except Exception as e:
+            print(f"保留失败: {e}")
+            return False
+
+    async def discard_review(self, review_id: str) -> bool:
+        """标记为丢弃"""
+        query = """
+        MATCH (d:DeepReview {id: $id})
+        SET d.review_status = 'discarded'
+        """
+        try:
+            await db.execute_write(query, {"id": review_id})
+            return True
+        except Exception as e:
+            print(f"丢弃失败: {e}")
+            return False
+
+    async def check_entity_changed(self, entity_id: str, stored_hash: str) -> bool:
+        """检查实体描述是否变化"""
+        query = """
+        MATCH (e:Entity {id: $entity_id})
+        RETURN e.description AS description
+        """
+        results = await db.execute_query(query, {"entity_id": entity_id})
+        if not results:
+            return True
+        current_desc = results[0].get("description") or ""
+        current_hash = hashlib.md5(current_desc.encode()).hexdigest()
+        return current_hash != stored_hash
+
+    async def regenerate_questions(self, review_id: str, force: bool = False) -> dict:
+        """重新生成问题"""
+        query = """
+        MATCH (d:DeepReview {id: $id})
+        RETURN d
+        """
+        results = await db.execute_query(query, {"id": review_id})
+        if not results:
+            return {"error": "复习内容不存在"}
+        d = results[0]["d"]
+        entity_id = d.get("entity_id")
+        stored_hash = d.get("entity_hash", "")
+        changed = await self.check_entity_changed(entity_id, stored_hash)
+
+        if not changed and not force:
+            return {
+                "error": "实体描述未变化，无需重新生成",
+                "changed": False,
+                "force_needed": True
+            }
+
+        context = await self._get_entity_context(entity_id)
+        entity_info = {
+            "entity_id": entity_id,
+            "label": d.get("entity_label", ""),
+            "description": d.get("entity_description", ""),
+            "entity_type": d.get("entity_type", "concept"),
+            "category": d.get("entity_category"),
+        }
+        questions = await self._generate_questions(entity_info, context)
+        if not questions:
+            return {"error": "生成失败，请重试"}
+
+        new_hash = hashlib.md5((d.get("entity_description") or "").encode()).hexdigest()
+        await db.execute_write("""
+            MATCH (d:DeepReview {id: $id})
+            SET d.questions_json = $questions_json,
+                d.entity_hash = $entity_hash,
+                d.generation_version = COALESCE(d.generation_version, 1) + 1
+        """, {
+            "id": review_id,
+            "questions_json": json.dumps(questions, ensure_ascii=False),
+            "entity_hash": new_hash
+        })
+        return {
+            "review_id": review_id,
+            "questions": questions,
+            "changed": changed,
+            "regeneration_count": d.get("generation_version", 1) + 1
+        }
+
+    async def get_entity_reviews(self, entity_id: str) -> list:
+        """获取某实体的所有复习卡片"""
+        query = """
+        MATCH (d:DeepReview {entity_id: $entity_id})
+        RETURN d.id AS id, d
+        ORDER BY d.generation_version DESC
+        """
+        results = await db.execute_query(query, {"entity_id": entity_id}) or []
+        return [self._parse_deep_review(r["d"], r.get("id")) for r in results]
 
     async def toggle_favorite(self, review_id: str) -> bool:
         """切换收藏状态"""
@@ -376,16 +556,8 @@ class DeepReviewEngine:
         return results[0].get("is_favorited", False) if results else False
 
     async def delete_review(self, review_id: str) -> bool:
-        """软删除复习内容"""
-        query = """
-        MATCH (d:DeepReview {id: $id})
-        SET d.is_deleted = true
-        """
-        try:
-            await db.execute_write(query, {"id": review_id})
-            return True
-        except:
-            return False
+        """软删除复习内容（兼容旧接口，映射为 discard）"""
+        return await self.discard_review(review_id)
 
     async def delete_entity(self, entity_id: str) -> bool:
         """删除实体及其相关复习内容"""
@@ -436,9 +608,8 @@ class DeepReviewEngine:
         user_answer: str
     ) -> dict:
         """
-        费曼反馈评估
+        费曼反馈评估，并记录历史
         """
-        # 获取复习内容和问题
         query = """
         MATCH (d:DeepReview {id: $id})
         RETURN d
@@ -455,7 +626,6 @@ class DeepReviewEngine:
 
         question = questions[question_index]
 
-        # 构建评估 prompt
         prompt = f"""概念：{d.get('entity_label')}
 描述：{d.get('entity_description')}
 
@@ -480,6 +650,8 @@ class DeepReviewEngine:
 
 只返回JSON。"""
 
+        score = 5
+        feedback_summary = ""
         try:
             async with httpx.AsyncClient(timeout=120) as client:
                 response = await client.post(
@@ -489,7 +661,24 @@ class DeepReviewEngine:
                 result = response.json()
                 text = result.get("response", "")
                 evaluation = self._parse_feedback(text)
+                score = evaluation.get("score", 5)
+                feedback_summary = evaluation.get("summary", "")
                 evaluation["answer_hint"] = question.get("answer_hint", "")
+                # 记录历史
+                await self.record_review_event(
+                    review_id=review_id,
+                    question_index=question_index,
+                    question_text=question.get("question", ""),
+                    user_answer=user_answer,
+                    score=score,
+                    feedback_summary=feedback_summary
+                )
+                # 更新 DeepReview 的 review_count 和 last_score
+                await db.execute_write("""
+                    MATCH (d:DeepReview {id: $id})
+                    SET d.review_count = COALESCE(d.review_count, 0) + 1,
+                        d.last_score = $score
+                """, {"id": review_id, "score": float(score)})
                 return evaluation
         except Exception as e:
             return {"score": 5, "feedback": [], "summary": f"评估服务暂时不可用: {e}", "answer_hint": question.get("answer_hint", "")}

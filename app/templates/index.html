@@ -658,8 +658,11 @@
                             </div>
                             <div style="margin-top: 8px; display: flex; gap: 4px;">
                                 <button onclick="event.stopPropagation();toggleFavorite(${i})" style="padding:4px 8px;background:#252540;border:1px solid #444;border-radius:4px;color:${e.is_favorited ? '#fdcb6e' : '#888'};cursor:pointer;font-size:11px;">${e.is_favorited ? '⭐' : '☆'}</button>
-                                <button onclick="event.stopPropagation();deleteReviewItem(${i})" style="padding:4px 8px;background:#252540;border:1px solid #444;border-radius:4px;color:#e17055;cursor:pointer;font-size:11px;">🗑</button>
-                                <span style="margin-left:auto;font-size:11px;color:#888;">${(e.questions || []).length} 题</span>
+                                <button onclick="event.stopPropagation();showHistoryModal(${i})" style="padding:4px 8px;background:#252540;border:1px solid #444;border-radius:4px;color:#74b9ff;cursor:pointer;font-size:11px;">📜</button>
+                                <button onclick="event.stopPropagation();regenerateReview(${i})" style="padding:4px 8px;background:#252540;border:1px solid #444;border-radius:4px;color:#a29bfe;cursor:pointer;font-size:11px;">🔄</button>
+                                <button onclick="event.stopPropagation();keepReview(${i})" style="padding:4px 8px;background:#252540;border:1px solid #444;border-radius:4px;color:#00b894;cursor:pointer;font-size:11px;">✅</button>
+                                <button onclick="event.stopPropagation();discardReview(${i})" style="padding:4px 8px;background:#252540;border:1px solid #444;border-radius:4px;color:#e17055;cursor:pointer;font-size:11px;">❌</button>
+                                <span style="margin-left:auto;font-size:11px;color:#888;">${(e.questions || []).length} 题 · ${e.review_count || 0} 复习</span>
                             </div>
                         </div>
                     `).join('')}
@@ -698,31 +701,78 @@
             }
         }
 
-        async function deleteReviewItem(index) {
+        async function keepReview(index) {
             const entity = currentDeepReviewSession[index];
             if (!entity) return;
+            if (!confirm('确定保留该卡片？保留后将从队列中移除。')) return;
+            try {
+                await fetch(`${API_BASE}/deep-review/keep/${entity.id}`, { method: 'POST' });
+                await loadDeepReviewQueue();
+            } catch (e) { console.error(e); }
+        }
 
-            const choice = confirm('确定删除这条复习内容吗？\n\n[确定] = 只删除复习内容\n[取消] = 同时删除复习+节点');
-            if (!choice) {
-                // 同时删除复习+节点
-                try {
-                    await fetch(`${API_BASE}/deep-review/entity/delete`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({entity_id: entity.entity_id})
-                    });
+        async function discardReview(index) {
+            const entity = currentDeepReviewSession[index];
+            if (!entity) return;
+            if (!confirm('确定丢弃该卡片？')) return;
+            try {
+                await fetch(`${API_BASE}/deep-review/discard/${entity.id}`, { method: 'POST' });
+                await loadDeepReviewQueue();
+            } catch (e) { console.error(e); }
+        }
+
+        async function regenerateReview(index) {
+            const entity = currentDeepReviewSession[index];
+            if (!entity) return;
+            const force = confirm('是否强制重新生成（忽略描述是否变化）？\n\n[确定] = 强制重新生成\n[取消] = 仅当描述变化时重新生成');
+            try {
+                const res = await fetch(`${API_BASE}/deep-review/${entity.id}/regenerate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ force: force })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    alert('重新生成成功！');
                     await loadDeepReviewQueue();
-                } catch (e) { console.error(e); }
-            } else {
-                // 只删除复习内容
-                try {
-                    const res = await fetch(`${API_BASE}/deep-review/delete/${entity.id}`, { method: 'POST' });
-                    const data = await res.json();
-                    if (data.success) {
-                        await loadDeepReviewQueue();
-                    }
-                } catch (e) { console.error(e); }
-            }
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function showHistoryModal(index) {
+            const entity = currentDeepReviewSession[index];
+            if (!entity) return;
+            try {
+                const res = await fetch(`${API_BASE}/deep-review/${entity.id}/history`);
+                const data = await res.json();
+                const history = data.history || [];
+
+                if (history.length === 0) {
+                    alert('暂无复习历史');
+                    return;
+                }
+
+                const historyHtml = history.map(h => `
+                    <div style="margin-bottom:16px;padding:12px;background:#252540;border-radius:6px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                            <span style="color:#74b9ff;">问题 ${h.question_index + 1}</span>
+                            <span style="color:${h.score >= 7 ? '#00b894' : h.score >= 4 ? '#fdcb6e' : '#e17055'};">${h.score}/10</span>
+                        </div>
+                        <div style="font-size:12px;color:#ccc;margin-bottom:4px;">你的回答：${escapeHtml(h.user_answer || '')}</div>
+                        <div style="font-size:12px;color:#888;">反馈：${escapeHtml(h.feedback_summary || '')}</div>
+                        <div style="font-size:11px;color:#555;margin-top:4px;">${h.created_at ? new Date(h.created_at).toLocaleString() : ''}</div>
+                    </div>
+                `).join('');
+
+                const panel = document.getElementById('deepReviewList');
+                panel.innerHTML = `
+                    <div onclick="loadDeepReviewQueue()" style="cursor:pointer;margin-bottom:12px;color:#6c5ce7;">← 返回队列</div>
+                    <div style="font-size:13px;color:#888;margin-bottom:12px;">📜 复习历史（共 ${history.length} 条）</div>
+                    ${historyHtml}
+                `;
+            } catch (e) { console.error(e); alert('加载历史失败'); }
         }
 
         function changeDeepCategory(cat) {
@@ -772,6 +822,11 @@
                     <div style="margin-top: 8px;">
                         <div style="font-size:11px;color:#888;margin-bottom:4px;">易混淆概念：</div>
                         ${(entity.siblings || []).map(s => `<span class="sibling-tag">${escapeHtml(s.label || '')}</span>`).join('') || '<span style="color:#666;font-size:11px;">无</span>'}
+                    </div>
+                    <div style="margin-top:12px;display:flex;gap:6px;">
+                        <button onclick="showHistoryModal(${index})" style="padding:6px 12px;background:#252540;border:1px solid #333;border-radius:6px;color:#74b9ff;cursor:pointer;font-size:12px;">📜 历史</button>
+                        <button onclick="keepReview(${index})" style="padding:6px 12px;background:#252540;border:1px solid #333;border-radius:6px;color:#00b894;cursor:pointer;font-size:12px;">✅ 保留</button>
+                        <button onclick="discardReview(${index})" style="padding:6px 12px;background:#252540;border:1px solid #333;border-radius:6px;color:#e17055;cursor:pointer;font-size:12px;">❌ 丢弃</button>
                     </div>
                 </div>
                 <div style="font-size:13px;color:#888;margin-bottom:12px;">🎯 挑战问题（点击提交获取反馈）</div>
