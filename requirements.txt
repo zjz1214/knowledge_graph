@@ -7,10 +7,7 @@ pydantic-settings>=2.1.0
 # Neo4j
 neo4j>=5.25.0
 
-# Ollama (embedding)
-ollama>=0.1.0
-
-# MiniMax API
+# HTTP client
 httpx>=0.26.0
 
 # Document parsing
@@ -22,4 +19,4 @@ notion-client>=2.2.0
 
 # Utilities
 python-dotenv>=1.0.0
-aiofiles>=23.2.0
+reportlab>=4.0.0

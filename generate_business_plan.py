@@ -18,10 +18,26 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from datetime import datetime
+import os
 
-# Register Chinese fonts
-pdfmetrics.registerFont(TTFont('SimHei', 'C:/Windows/Fonts/simhei.ttf'))
-pdfmetrics.registerFont(TTFont('Microsoft YaHei', 'C:/Windows/Fonts/msyh.ttc'))
+def register_chinese_fonts():
+    """Register Chinese fonts with cross-platform fallback"""
+    font_paths = [
+        ('SimHei', 'C:/Windows/Fonts/simhei.ttf'),
+        ('Microsoft YaHei', 'C:/Windows/Fonts/msyh.ttc'),
+        ('SimHei', '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'),
+        ('SimHei', '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'),
+        ('SimHei', '/System/Library/Fonts/PingFang.ttc'),
+    ]
+    for name, path in font_paths:
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+                return
+            except Exception:
+                pass
+
+register_chinese_fonts()
 
 # Color palette
 COLORS = {

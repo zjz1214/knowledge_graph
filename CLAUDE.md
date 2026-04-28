@@ -247,3 +247,12 @@ git filter-repo --path <file> --invert-paths --force
 git push --force
 ```
 然后在 GitHub 设置页解除对该 secret 的警报。
+
+## 待办事项（TODO）
+
+以下为待实现功能的记录，按优先级排序：
+
+- [ ] 将图谱划分为金融/技术两个子网络，减少单次计算量
+- [ ] 支持 Onenote 导入
+- [ ] 实现节点管理功能（删除、收藏、搜索列表看板）
+- [ ] 提前自动生成复习内容，而非临时生成
