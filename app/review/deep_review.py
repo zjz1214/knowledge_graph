@@ -660,15 +660,19 @@ class DeepReviewEngine:
             return {"score": 5, "feedback": [], "summary": f"评估服务暂时不可用: {e}", "answer_hint": question.get("answer_hint", "")}
 
     def _parse_feedback(self, text: str) -> dict:
-        """解析反馈 JSON"""
+        """解析反馈 JSON，解析失败时返回明确的 error 状态"""
         try:
             start = text.find("{")
             end = text.rfind("}") + 1
             if start >= 0 and end > start:
-                return json.loads(text[start:end])
+                data = json.loads(text[start:end])
+                # 确保结构完整
+                if "score" in data and "feedback" in data:
+                    return data
         except:
             pass
-        return {"score": 5, "feedback": [], "summary": text[:200]}
+        # 解析失败：返回 error 状态，不返回原始文本片段
+        return {"error": "解析失败", "score": 5, "feedback": [], "summary": "评估服务返回格式异常，已忽略"}
 
 
 # 全局实例

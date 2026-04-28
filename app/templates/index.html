@@ -844,21 +844,25 @@
                 let feedbackHtml = `
                     <div class="feedback-panel">
                         <div class="feedback-score" style="color: ${scoreColor};">${score}/10</div>
-                        ${data.answer_hint ? `<div style="margin-top:8px;font-size:12px;color:#aaa;background:#1e1e2e;padding:8px;border-radius:4px;"><strong>参考回答：</strong>${escapeHtml(data.answer_hint)}</div>` : ''}
+                        ${(data.answer_hint) ? `<div style="margin-top:8px;font-size:12px;color:#aaa;background:#1e1e2e;padding:8px;border-radius:4px;line-height:1.6;"><strong>参考回答：</strong><br>${escapeHtml(data.answer_hint || '')}</div>` : ''}
                 `;
 
-                if (data.feedback && data.feedback.length > 0) {
-                    feedbackHtml += data.feedback.map(f => `
+                if (Array.isArray(data.feedback) && data.feedback.length > 0) {
+                    feedbackHtml += data.feedback.map(f => {
+                        const item = (typeof f === 'object' && f !== null) ? f : {};
+                        const typeLabel = item.type === 'gap' ? '逻辑断层' : item.type === 'misconception' ? '误解' : '表面化';
+                        const typeClass = item.type || 'gap';
+                        return `
                         <div class="feedback-item">
-                            <span class="type ${f.type || 'gap'}">${f.type === 'gap' ? '逻辑断层' : f.type === 'misconception' ? '误解' : '表面化'}</span>
-                            <div class="point">${escapeHtml(f.point || '')}</div>
-                            <div class="question">💭 ${escapeHtml(f.question || '')}</div>
-                        </div>
-                    `).join('');
+                            <span class="type ${typeClass}">${escapeHtml(typeLabel)}</span>
+                            <div class="point">${escapeHtml(item.point || '（无内容）')}</div>
+                            <div class="question">💭 ${escapeHtml(item.question || '')}</div>
+                        </div>`;
+                    }).join('');
                 }
 
                 if (data.summary) {
-                    feedbackHtml += `<div style="margin-top:12px;font-size:12px;color:#888;">${escapeHtml(data.summary)}</div>`;
+                    feedbackHtml += `<div style="margin-top:12px;font-size:12px;color:#888;line-height:1.6;">${escapeHtml(data.summary || '')}</div>`;
                 }
 
                 feedbackHtml += '</div>';
