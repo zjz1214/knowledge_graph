@@ -626,6 +626,7 @@
                         <div class="review-entity" onclick="showDeepReviewEntity(${i})">
                             <div class="review-entity-header">
                                 <span class="review-entity-title">${escapeHtml(e.entity_label || e.entity_id)}</span>
+                                <button onclick="event.stopPropagation();deleteEntity('${e.entity_id}')" style="padding:2px 6px;background:#252540;border:1px solid #444;border-radius:3px;color:#e17055;cursor:pointer;font-size:10px;margin-left:4px;" title="删除节点">🗑</button>
                                 <span class="review-entity-score">⭐ ${e.importance_score || 0}</span>
                             </div>
                             <div class="review-entity-desc">${escapeHtml(e.entity_description || '暂无描述')}</div>
@@ -715,6 +716,18 @@
                     alert('重新生成成功！');
                     await loadDeepReviewQueue();
                 }
+            } catch (e) { console.error(e); }
+        }
+
+        async function deleteEntity(entityId) {
+            if (!confirm('确定删除该概念节点？\n这将同时删除该节点的所有复习卡片，且不可恢复。')) return;
+            try {
+                await fetch(`${API_BASE}/deep-review/entity/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ entity_id: entityId })
+                });
+                await loadDeepReviewQueue();
             } catch (e) { console.error(e); }
         }
 
