@@ -6,16 +6,14 @@ from app.core.embedding import embedding_model
 
 settings = get_settings()
 
+TOKEN_PLAN_BASE = "https://token-plan-cn.xiaomimimo.com/v1"
+TOKEN_PLAN_KEY = "tp-clupk2hrhxfh411yeo7kk22o4mxbnqzgi5avazgs273y7gc8"
+
 
 class MiniMaxLLM:
-    """MiniMax API wrapper for LLM generation"""
-
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key or settings.minimax_api_key
-        self.base_url = settings.minimax_api_base
+    """token-plan LLM wrapper"""
 
     async def generate(self, prompt: str, system_prompt: str = None) -> str:
-        """Generate response using MiniMax API"""
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -23,16 +21,9 @@ class MiniMaxLLM:
 
         async with httpx.AsyncClient(timeout=120) as client:
             response = await client.post(
-                f"{self.base_url}/v1/text/chatcompletion_v2",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "MiniMax-M2.7",
-                    "messages": messages,
-                    "temperature": 0.7
-                }
+                f"{TOKEN_PLAN_BASE}/chat/completions",
+                headers={"Authorization": f"Bearer {TOKEN_PLAN_KEY}"},
+                json={"model": "mimo-v2.5-pro", "messages": messages, "max_tokens": 2048}
             )
             response.raise_for_status()
             data = response.json()

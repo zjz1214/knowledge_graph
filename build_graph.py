@@ -22,8 +22,14 @@ load_dotenv()
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
+
+TOKEN_PLAN_BASE = "https://token-plan-cn.xiaomimimo.com/v1"
+TOKEN_PLAN_KEY = "tp-clupk2hrhxfh411yeo7kk22o4mxbnqzgi5avazgs273y7gc8"
+MODEL = "mimo-v2.5-pro"
+
+# Token usage tracking
+_total_tokens = 0
+_api_calls = 0
 
 
 def compute_id(text: str) -> str:
@@ -67,9 +73,40 @@ def detect_category(content: str) -> str:
     return 'other'
 
 
+async def chat_llm(prompt: str) -> str:
+    """Call token-plan LLM API with retry on 429"""
+    global _total_tokens, _api_calls
+    for attempt in range(5):
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(
+                    f"{TOKEN_PLAN_BASE}/chat/completions",
+                    headers={"Authorization": f"Bearer {TOKEN_PLAN_KEY}"},
+                    json={"model": MODEL, "messages": [{"role": "user", "content": prompt}], "max_tokens": 2048}
+                )
+                if response.status_code == 429:
+                    wait = 2 ** attempt
+                    print(f"[WARN] Rate limited, retry in {wait}s (attempt {attempt+1}/5)")
+                    await asyncio.sleep(wait)
+                    continue
+                response.raise_for_status()
+                data = response.json()
+                usage = data.get("usage", {})
+                _total_tokens += usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+                _api_calls += 1
+                return data["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                wait = 2 ** attempt
+                print(f"[WARN] Rate limited, retry in {wait}s (attempt {attempt+1}/5)")
+                await asyncio.sleep(wait)
+                continue
+            raise
+    raise Exception("Max retries exceeded for 429")
+
+
 async def extract_entities(chunk_content: str, chunk_id: str) -> tuple[list[dict], str]:
-    """Extract entities from chunk using Ollama - 改进的详细提取"""
-    # Detect category first
+    """Extract entities from chunk using token-plan LLM"""
     category = detect_category(chunk_content)
 
     prompt = f"""你是一个知识图谱专家。从以下文本中提取所有重要的概念、术语、技术、方法等实体。
@@ -81,7 +118,7 @@ async def extract_entities(chunk_content: str, chunk_id: str) -> tuple[list[dict
 
 输出格式（严格JSON数组）：
 [
-  {{"id":"unique_id","label":"实体名称","type":"实体类型","description":"简短描述"}}
+  {{"label":"实体名称","type":"实体类型","description":"简短描述"}}
 ]
 
 文本内容（来自知识库 chunk {chunk_id}）：
@@ -92,37 +129,29 @@ async def extract_entities(chunk_content: str, chunk_id: str) -> tuple[list[dict
 直接返回JSON数组，不要任何解释。数量尽可能多。"""
 
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            response = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
-            )
-            result = response.json()
-            text = result.get("response", "")
-            entities = safe_json_parse(text)
+        text = await chat_llm(prompt)
+        entities = safe_json_parse(text)
 
-            # Validate entities have required fields
-            valid = []
-            for e in entities:
-                if isinstance(e, dict) and "label" in e:
-                    label = e.get("label", "").strip()
-                    if len(label) < 2:
-                        continue
-                    # Create unique id based on label
-                    entity_id = compute_id(label) + "_" + e.get("type", "concept")[:4]
-                    e["id"] = entity_id[:30]
-                    e["type"] = e.get("type", "concept")
-                    e["description"] = e.get("description", "")[:100]
-                    e["category"] = category
-                    valid.append(e)
-            return valid, category
+        valid = []
+        for e in entities:
+            if isinstance(e, dict) and "label" in e:
+                label = e.get("label", "").strip()
+                if len(label) < 2:
+                    continue
+                entity_id = compute_id(label) + "_" + e.get("type", "concept")[:4]
+                e["id"] = entity_id[:30]
+                e["type"] = e.get("type", "concept")
+                e["description"] = e.get("description", "")[:100]
+                e["category"] = category
+                valid.append(e)
+        return valid, category
     except Exception as e:
-        pass
+        print(f"[ERROR] extract_entities: {e}")
     return [], category
 
 
 async def extract_relationships(entities: list[dict], chunk_content: str) -> list[dict]:
-    """Extract relationships between entities - 改进版"""
+    """Extract relationships between entities using token-plan LLM"""
     if len(entities) < 2:
         return []
 
@@ -154,16 +183,10 @@ async def extract_relationships(entities: list[dict], chunk_content: str) -> lis
 只返回确实存在的关系，不要猜测。直接返回JSON数组。"""
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
-            )
-            result = response.json()
-            text = result.get("response", "")
-            return safe_json_parse(text)
-    except:
-        pass
+        text = await chat_llm(prompt)
+        return safe_json_parse(text)
+    except Exception as e:
+        print(f"[ERROR] extract_relationships: {e}")
     return []
 
 
@@ -233,9 +256,25 @@ async def process_chunk(driver, chunk_id: str, chunk_content: str):
     return stored_entities, stored_rels
 
 
+CONCURRENCY = 20  # 并发数
+
+
+async def process_batch(driver, batch: list, total: int, progress_lock: asyncio.Lock):
+    """并发处理一批 chunks"""
+    tasks = []
+    for chunk in batch:
+        tasks.append(process_chunk(driver, chunk["chunk_id"], chunk["content"]))
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    async with progress_lock:
+        total_entities = sum(r[0] if isinstance(r, tuple) else 0 for r in results)
+        total_rels = sum(r[1] if isinstance(r, tuple) else 0 for r in results)
+    return total_entities, total_rels
+
+
 async def main():
     print("=" * 60)
-    print("  Knowledge Graph Builder - Enhanced")
+    print("  Knowledge Graph Builder - Concurrent")
     print("=" * 60)
 
     driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
@@ -252,33 +291,31 @@ async def main():
         chunks = await result.data()
 
     print(f"✓ Found {len(chunks)} chunks to process")
+    print(f"✓ Concurrency: {CONCURRENCY}")
     print()
 
     # Clear existing Entity-Chunk relationships to avoid duplicates
     async with driver.session() as session:
         await session.run("MATCH (e:Entity)-[r:MENTIONS]->() DELETE r")
-        # Keep entities but clear their labels to refresh
         await session.run("MATCH (e:Entity) SET e.label = ''")
 
     total_entities = 0
     total_rels = 0
+    progress_lock = asyncio.Lock()
+    batch_size = CONCURRENCY
 
-    for i, chunk in enumerate(chunks, 1):
-        chunk_id = chunk["chunk_id"]
-        content = chunk["content"]
+    for batch_start in range(0, len(chunks), batch_size):
+        batch_end = min(batch_start + batch_size, len(chunks))
+        batch = chunks[batch_start:batch_end]
+        i = batch_start + 1
 
-        if len(content) < 30:
-            continue
-
-        print(f"[{i}/{len(chunks)}] {chunk_id[:20]}...", end=" ", flush=True)
-
-        ents, rels = await process_chunk(driver, chunk_id, content)
+        ents, rels = await process_batch(driver, batch, len(chunks), progress_lock)
         total_entities += ents
         total_rels += rels
-        print(f"+{ents} entities, +{rels} rels")
+        print(f"[{i}-{batch_end}/{len(chunks)}] +{ents} entities, +{rels} rels")
 
-        if i % 20 == 0:
-            await asyncio.sleep(1)
+        if (batch_end // 100) % 5 == 0:
+            await asyncio.sleep(0.5)
 
     print()
     print("=" * 60)

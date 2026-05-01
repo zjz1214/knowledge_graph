@@ -13,6 +13,7 @@ httpx>=0.26.0
 # Document parsing
 markdown>=3.5.0
 python-frontmatter>=1.1.0
+PyMuPDF>=1.23.0
 
 # Notion API
 notion-client>=2.2.0

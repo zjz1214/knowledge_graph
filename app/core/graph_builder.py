@@ -1,5 +1,7 @@
 import httpx
 import json
+import hashlib
+import logging
 from typing import Optional
 from app.config import get_settings
 from app.core.database import db
@@ -9,57 +11,91 @@ from app.models.note import Note
 
 settings = get_settings()
 
+TOKEN_PLAN_BASE = "https://token-plan-cn.xiaomimimo.com/v1"
+TOKEN_PLAN_KEY = "tp-clupk2hrhxfh411yeo7kk22o4mxbnqzgi5avazgs273y7gc8"
+
+logger = logging.getLogger(__name__)
+
+# Track token usage
+_total_tokens = 0
+_completion_tokens = 0
+_prompt_tokens = 0
+_api_calls = 0
+
 
 class GraphBuilder:
-    """Build knowledge graph from notes using Ollama LLM"""
+    """Build knowledge graph from notes using token-plan LLM (mimo-v2.5)"""
 
     def __init__(self):
-        self.ollama_url = settings.ollama_base_url
         self.embedding_model = embedding_model
 
+    async def _chat(self, prompt: str, model: str = "mimo-v2.5-pro") -> str:
+        """Call token-plan chat API"""
+        global _total_tokens, _api_calls
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                f"{TOKEN_PLAN_BASE}/chat/completions",
+                headers={"Authorization": f"Bearer {TOKEN_PLAN_KEY}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 2048,
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            usage = data.get("usage", {})
+            prompt_toks = usage.get("prompt_tokens", 0)
+            completion_toks = usage.get("completion_tokens", 0)
+            total = prompt_toks + completion_toks
+            _total_tokens += total
+            _prompt_tokens += prompt_toks
+            _completion_tokens += completion_toks
+            _api_calls += 1
+            logger.info(f"[GraphBuilder] API call #{_api_calls} | prompt={prompt_toks} completion={completion_toks} total={total} | cumulative={_total_tokens}")
+            return data["choices"][0]["message"]["content"]
+
+    def _entity_id(self, label: str) -> str:
+        """Generate deterministic ID from entity label"""
+        h = hashlib.md5(label.encode()).hexdigest()[:12]
+        return f"e_{h}"
+
     async def extract_entities(self, chunk_content: str) -> list[Entity]:
-        """Extract entities from a chunk using local LLM"""
+        """Extract entities from a chunk using token-plan LLM"""
         prompt = f"""Extract entities from the following text.
-Return a JSON array of entities with fields: id, label, type (concept/person/organization/topic/technique/tool/paper/other), description.
+Return a JSON array of entities with fields: label, type (concept/person/organization/topic/technique/tool/paper/other), description.
 
 Text:
 {chunk_content[:2000]}
 
 Example output:
 [
-  {{"id": "entity_1", "label": "Machine Learning", "type": "concept", "description": "A field of AI"}}
+  {{"label": "Machine Learning", "type": "concept", "description": "A field of AI that enables computers to learn from data"}}
 ]
 
 Return ONLY the JSON array, no other text."""
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": "qwen2.5:7b",  # or whatever local model
-                    "prompt": prompt,
-                    "stream": False
-                }
-            )
-            response.raise_for_status()
-            result = response.json()
-            text = result.get("response", "")
+        text = await self._chat(prompt)
 
         # Parse JSON
         try:
-            # Try to extract JSON from response
             start = text.find("[")
             end = text.rfind("]") + 1
             if start >= 0 and end > start:
                 entities_data = json.loads(text[start:end])
-                return [Entity(**e) for e in entities_data]
-        except json.JSONDecodeError:
-            pass
+                entities = []
+                for e in entities_data:
+                    e["id"] = self._entity_id(e["label"])
+                    e["type"] = EntityType(e.get("type", "concept"))
+                    entities.append(Entity(**e))
+                return entities
+        except (json.JSONDecodeError, ValueError) as ex:
+            logger.warning(f"[GraphBuilder] Failed to parse entities: {ex} | text: {text[:200]}")
 
         return []
 
     async def extract_relationships(self, entity1: Entity, entity2: Entity, context: str) -> Optional[Relationship]:
-        """Extract relationship between two entities"""
+        """Extract relationship between two entities using token-plan LLM"""
         prompt = f"""Given two entities and their context, determine their relationship.
 Entities: "{entity1.label}" and "{entity2.label}"
 Context: {context[:500]}
@@ -70,18 +106,7 @@ Example: {{"type": "USES", "weight": 0.8}}
 
 If no meaningful relationship exists, return null."""
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": "qwen2.5:7b",
-                    "prompt": prompt,
-                    "stream": False
-                }
-            )
-            response.raise_for_status()
-            result = response.json()
-            text = result.get("response", "")
+        text = await self._chat(prompt)
 
         try:
             # Find JSON in response
@@ -186,6 +211,16 @@ If no meaningful relationship exists, return null."""
         entities, relationships = await self.build_graph(note)
         await self.store_in_neo4j(entities, relationships)
         return len(entities), len(relationships)
+
+    @staticmethod
+    def get_token_stats() -> dict:
+        """Return current token usage stats"""
+        return {
+            "api_calls": _api_calls,
+            "prompt_tokens": _prompt_tokens,
+            "completion_tokens": _completion_tokens,
+            "total_tokens": _total_tokens,
+        }
 
 
 # Global instance

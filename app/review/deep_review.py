@@ -9,14 +9,19 @@ import json
 import random
 import httpx
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 from app.core.database import db
 from app.core.rag_engine import MiniMaxLLM
 from app.config import get_settings
+from app.models.note import CardRating
+from app.review.fsrs import stability_after_rating, difficulty_after_rating
 
 settings = get_settings()
 OLLAMA_URL = settings.ollama_base_url
+
+TOKEN_PLAN_BASE = "https://token-plan-cn.xiaomimimo.com/v1"
+TOKEN_PLAN_KEY = "tp-clupk2hrhxfh411yeo7kk22o4mxbnqzgi5avazgs273y7gc8"
 
 
 def _clean_text(text: str) -> str:
@@ -162,7 +167,7 @@ class DeepReviewEngine:
         print(f"批量生成完成: {generated} 条")
 
     async def _get_important_entities(self, category: str = None, limit: int = 20) -> list:
-        """获取重要实体列表"""
+        """获取重要实体列表，按重要性排序（关联数 + 前置依赖×2 + 过期天数×权重）"""
         if category:
             query = """
             MATCH (e:Entity)
@@ -172,12 +177,22 @@ class DeepReviewEngine:
             OPTIONAL MATCH (e)<-[r2]-(pre:Entity)
             WHERE size(pre.label) > 1
             WITH e, connections, count(r2) AS prereq_count
+            OPTIONAL MATCH (d:DeepReview {entity_id: e.id})
+            WITH e, connections, prereq_count,
+                 d.due_date AS due_date,
+                 d.last_reviewed_at AS last_reviewed
+            WITH e, connections, prereq_count,
+                 CASE WHEN due_date IS NOT NULL THEN
+                     CASE WHEN due_date < datetime() THEN
+                         duration.between(due_date, datetime()).days
+                     ELSE 0 END
+                 ELSE 0 END AS overdue_days
             RETURN e.id AS entity_id,
                    e.label AS label,
                    e.description AS description,
                    e.type AS entity_type,
                    e.category AS category,
-                   connections + prereq_count * 2 AS importance_score
+                   connections + prereq_count * 2 + overdue_days * 10 AS importance_score
             ORDER BY importance_score DESC
             LIMIT $limit
             """
@@ -191,12 +206,22 @@ class DeepReviewEngine:
             OPTIONAL MATCH (e)<-[r2]-(pre:Entity)
             WHERE size(pre.label) > 1
             WITH e, connections, count(r2) AS prereq_count
+            OPTIONAL MATCH (d:DeepReview {entity_id: e.id})
+            WITH e, connections, prereq_count,
+                 d.due_date AS due_date,
+                 d.last_reviewed_at AS last_reviewed
+            WITH e, connections, prereq_count,
+                 CASE WHEN due_date IS NOT NULL THEN
+                     CASE WHEN due_date < datetime() THEN
+                         duration.between(due_date, datetime()).days
+                     ELSE 0 END
+                 ELSE 0 END AS overdue_days
             RETURN e.id AS entity_id,
                    e.label AS label,
                    e.description AS description,
                    e.type AS entity_type,
                    e.category AS category,
-                   connections + prereq_count * 2 AS importance_score
+                   connections + prereq_count * 2 + overdue_days * 10 AS importance_score
             ORDER BY importance_score DESC
             LIMIT $limit
             """
@@ -305,11 +330,13 @@ class DeepReviewEngine:
         try:
             async with httpx.AsyncClient(timeout=120) as client:
                 response = await client.post(
-                    f"{OLLAMA_URL}/api/generate",
-                    json={"model": self.ollama_model, "prompt": prompt, "stream": False}
+                    f"{TOKEN_PLAN_BASE}/chat/completions",
+                    headers={"Authorization": f"Bearer {TOKEN_PLAN_KEY}"},
+                    json={"model": "mimo-v2.5-pro", "messages": [{"role": "user", "content": prompt}], "max_tokens": 2048}
                 )
-                result = response.json()
-                text = result.get("response", "")
+                response.raise_for_status()
+                data = response.json()
+                text = data["choices"][0]["message"]["content"]
                 return self._parse_questions(text)
         except Exception as e:
             print(f"LLM调用失败: {e}")
@@ -352,6 +379,8 @@ class DeepReviewEngine:
             last_score: 0.0,
             entity_hash: $entity_hash,
             generation_version: 1,
+            due_date: datetime() + duration({days: 1}),
+            last_reviewed_at: datetime(),
             created_at: datetime()
         })
         """
@@ -663,36 +692,28 @@ class DeepReviewEngine:
 用户回答：{user_answer}
 
 请评估用户回答的质量（0-10分），与参考回答对比后指出逻辑断层或可深化的地方。
-输出JSON格式：
-{{
-  "score": 评分数字,
-  "feedback": [
-    {{
-      "type": "gap|misconception|superficial",
-      "point": "问题点",
-      "question": "追问"
-    }}
-  ],
-  "summary": "总结"
-}}
-
-只返回JSON。"""
+输出格式：严格JSON，不能有其他文字。
+{{"score": 评分数字, "feedback": [{{"type": "gap|misconception|superficial", "point": "问题点", "question": "追问"}}], "summary": "总结"}}
+直接返回JSON。"""
 
         score = 5
         feedback_summary = ""
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                response = await client.post(
-                    f"{OLLAMA_URL}/api/generate",
-                    json={"model": self.ollama_model, "prompt": prompt, "stream": False}
+                raw = await client.post(
+                    f"{TOKEN_PLAN_BASE}/chat/completions",
+                    headers={"Authorization": f"Bearer {TOKEN_PLAN_KEY}"},
+                    json={"model": "mimo-v2.5-pro", "messages": [{"role": "user", "content": prompt}], "max_tokens": 2048}
                 )
-                result = response.json()
-                text = result.get("response", "")
+                print(f"[DEBUG] status={raw.status_code} body={raw.text[:200]}")
+                raw.raise_for_status()
+                data = raw.json()
+                msg = data["choices"][0]["message"]
+                text = msg.get("content") or msg.get("reasoning_content", "")
                 evaluation = self._parse_feedback(text)
                 score = evaluation.get("score", 5)
                 feedback_summary = evaluation.get("summary", "")
                 evaluation["answer_hint"] = stored_hint
-                # 记录历史
                 await self.record_review_event(
                     review_id=review_id,
                     question_index=question_index,
@@ -701,14 +722,30 @@ class DeepReviewEngine:
                     score=score,
                     feedback_summary=feedback_summary
                 )
-                # 更新 DeepReview 的 review_count 和 last_score
+                # 计算下次复习时间（FSRS 简化版）
+                # score 0-3 -> FORGOT, 4-6 -> GOOD, 7-10 -> EASY
+                if score <= 3:
+                    rating = CardRating.FORGOT
+                    next_interval_days = 1
+                elif score <= 6:
+                    rating = CardRating.GOOD
+                    next_interval_days = max(1, (d.get("review_count", 0) + 1) * 2)
+                else:
+                    rating = CardRating.EASY
+                    next_interval_days = max(3, (d.get("review_count", 0) + 1) * 4)
+
+                # 更新 DeepReview 的 review_count、last_score、due_date、last_reviewed_at
                 await db.execute_write("""
                     MATCH (d:DeepReview {id: $id})
                     SET d.review_count = COALESCE(d.review_count, 0) + 1,
-                        d.last_score = $score
-                """, {"id": review_id, "score": float(score)})
+                        d.last_score = $score,
+                        d.due_date = datetime() + duration({days: $interval}),
+                        d.last_reviewed_at = datetime()
+                """, {"id": review_id, "score": float(score), "interval": next_interval_days})
                 return evaluation
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {"score": 5, "feedback": [], "summary": f"评估服务暂时不可用: {e}", "answer_hint": question.get("answer_hint", "")}
 
     def _parse_feedback(self, text: str) -> dict:

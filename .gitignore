@@ -23,3 +23,6 @@ neo4j_data/
 # Data
 data/notes/*.md
 data/notes/!sample*.md
+
+# Data files
+data/pdfs/

@@ -94,12 +94,57 @@
         .feedback-item .question { font-size: 12px; color: #00b894; font-style: italic; }
         .prereq-tag { display: inline-block; background: #00b894; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin: 2px; }
         .sibling-tag { display: inline-block; background: #fd79a8; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin: 2px; }
+        /* Entity Modal */
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+        .modal-overlay.hidden { display: none; }
+        .modal-content { background: #1a1a2e; border: 1px solid #444; border-radius: 12px; width: 90%; max-width: 800px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+        .modal-header { padding: 16px 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+        .modal-header h3 { margin: 0; color: #fff; font-size: 16px; }
+        .modal-close { background: #333; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+        .modal-close:hover { background: #444; }
+        .modal-toolbar { padding: 12px 20px; border-bottom: 1px solid #333; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .modal-search { flex: 1; min-width: 200px; padding: 8px 12px; background: #252540; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 13px; }
+        .modal-search:focus { border-color: #6c5ce7; outline: none; }
+        .filter-group { display: flex; gap: 4px; }
+        .filter-chip { padding: 6px 12px; background: #252540; border: 1px solid #333; border-radius: 20px; color: #888; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+        .filter-chip:hover { background: #353560; color: #fff; }
+        .filter-chip.active { background: #6c5ce7; border-color: #6c5ce7; color: #fff; }
+        .filter-chip.finance.active { background: #00b894; border-color: #00b894; }
+        .filter-chip.tech.active { background: #fd79a8; border-color: #fd79a8; }
+        .sort-select { padding: 6px 10px; background: #252540; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 12px; }
+        .modal-body { flex: 1; overflow-y: auto; padding: 12px 20px; }
+        .entity-row { display: flex; align-items: center; padding: 10px 12px; background: #252540; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; }
+        .entity-row:hover { background: #353560; }
+        .entity-row-info { flex: 1; min-width: 0; }
+        .entity-row-name { font-size: 14px; font-weight: 500; color: #fff; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .entity-row-meta { font-size: 11px; color: #888; display: flex; gap: 8px; }
+        .entity-row-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-right: 4px; }
+        .badge-tech { background: #fd79a8; color: #fff; }
+        .badge-finance { background: #00b894; color: #fff; }
+        .badge-concept { background: #6c5ce7; color: #fff; }
+        .badge-technique { background: #00b894; color: #fff; }
+        .badge-tool { background: #fdcb6e; color: #000; }
+        .entity-row-stats { font-size: 11px; color: #666; margin-left: 12px; white-space: nowrap; }
+        .entity-row-actions { display: flex; gap: 4px; margin-left: 12px; }
+        .entity-action-btn { padding: 4px 8px; background: #333; border: none; border-radius: 4px; color: #888; cursor: pointer; font-size: 12px; }
+        .entity-action-btn:hover { background: #444; color: #fff; }
+        .entity-action-btn.delete:hover { background: #e17055; color: #fff; }
+        .entity-action-btn.fav.active { color: #fdcb6e; }
+        .modal-footer { padding: 12px 20px; border-top: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+        .pagination-info { font-size: 12px; color: #888; }
+        .pagination-controls { display: flex; gap: 4px; }
+        .page-btn { padding: 6px 12px; background: #252540; border: 1px solid #333; border-radius: 6px; color: #fff; cursor: pointer; font-size: 12px; }
+        .page-btn:hover { background: #353560; }
+        .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="sidebar">
-            <div class="section-title">深度理解测试</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div class="section-title" style="margin-bottom: 0;">深度理解测试</div>
+                <button onclick="openEntityModal()" style="padding: 6px 12px; background: #252540; border: 1px solid #444; border-radius: 6px; color: #888; cursor: pointer; font-size: 12px;">📋 节点管理</button>
+            </div>
             <div id="deepReviewPanel" class="deep-review-panel active">
                 <div id="deepReviewList">
                     <div class="loading">加载中...</div>
@@ -143,6 +188,41 @@
     </div>
 
     <div class="tooltip" id="tooltip" style="display:none;"></div>
+
+    <!-- Entity Management Modal -->
+    <div id="entityModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📋 节点管理</h3>
+                <button class="modal-close" onclick="closeEntityModal()">X</button>
+            </div>
+            <div class="modal-toolbar">
+                <input type="text" id="entitySearchInput" class="modal-search" placeholder="搜索节点名称或描述..." oninput="onEntitySearchInput()">
+                <div class="filter-group">
+                    <button class="filter-chip active" data-filter="all" onclick="setEntityFilter('all')">全部</button>
+                    <button class="filter-chip tech" data-filter="tech" onclick="setEntityFilter('tech')">技术</button>
+                    <button class="filter-chip finance" data-filter="finance" onclick="setEntityFilter('finance')">金融</button>
+                    <button class="filter-chip" data-filter="favorited" onclick="setEntityFilter('favorited')">⭐已收藏</button>
+                    <button class="filter-chip" data-filter="has_review" onclick="setEntityFilter('has_review')">📚有卡片</button>
+                </div>
+                <select id="entitySortSelect" class="sort-select" onchange="onEntitySortChange()">
+                    <option value="importance">按重要性</option>
+                    <option value="connections">按关联数</option>
+                    <option value="label">按名称</option>
+                </select>
+            </div>
+            <div class="modal-body" id="entityModalBody">
+                <div class="loading">加载中...</div>
+            </div>
+            <div class="modal-footer">
+                <div class="pagination-info" id="entityPaginationInfo">共 0 条</div>
+                <div class="pagination-controls">
+                    <button class="page-btn" id="entityPrevBtn" onclick="entityPrevPage()">上一页</button>
+                    <button class="page-btn" id="entityNextBtn" onclick="entityNextPage()">下一页</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script>
         const API_BASE = '';
@@ -913,6 +993,177 @@
                     d3.zoomIdentity.translate(x, y).scale(scale)
                 );
             }
+        }
+
+        // Entity Modal
+        let entityPage = 1;
+        let entityTotalPages = 1;
+        let entityTotal = 0;
+        let entityFilter = 'all';
+        let entitySort = 'importance';
+        let entitySearch = '';
+        let entitySearchTimeout = null;
+
+        function openEntityModal() {
+            document.getElementById('entityModal').classList.remove('hidden');
+            loadEntityList();
+        }
+
+        function closeEntityModal() {
+            document.getElementById('entityModal').classList.add('hidden');
+        }
+
+        function onEntitySearchInput() {
+            clearTimeout(entitySearchTimeout);
+            entitySearchTimeout = setTimeout(() => {
+                entitySearch = document.getElementById('entitySearchInput').value.trim();
+                entityPage = 1;
+                loadEntityList();
+            }, 300);
+        }
+
+        function setEntityFilter(filter) {
+            entityFilter = filter;
+            document.querySelectorAll('.filter-chip[data-filter]').forEach(chip => {
+                chip.classList.remove('active');
+                if (chip.dataset.filter === filter) chip.classList.add('active');
+            });
+            entityPage = 1;
+            loadEntityList();
+        }
+
+        function onEntitySortChange() {
+            entitySort = document.getElementById('entitySortSelect').value;
+            entityPage = 1;
+            loadEntityList();
+        }
+
+        function entityPrevPage() {
+            if (entityPage > 1) {
+                entityPage--;
+                loadEntityList();
+            }
+        }
+
+        function entityNextPage() {
+            if (entityPage < entityTotalPages) {
+                entityPage++;
+                loadEntityList();
+            }
+        }
+
+        async function loadEntityList() {
+            const body = document.getElementById('entityModalBody');
+            body.innerHTML = '<div class="loading">加载中...</div>';
+
+            try {
+                let category = null;
+                let favorited = false;
+                let hasReview = false;
+
+                if (entityFilter === 'tech') category = 'tech';
+                else if (entityFilter === 'finance') category = 'finance';
+                else if (entityFilter === 'favorited') favorited = true;
+                else if (entityFilter === 'has_review') hasReview = true;
+
+                const params = new URLSearchParams({
+                    page: entityPage,
+                    limit: 30,
+                    sort: entitySort,
+                    order: 'desc'
+                });
+                if (entitySearch) params.append('q', entitySearch);
+                if (category) params.append('category', category);
+                if (favorited) params.append('favorited', 'true');
+                if (hasReview) params.append('has_review', 'true');
+
+                const res = await fetch(`${API_BASE}/entities/?${params}`);
+                const data = await res.json();
+
+                entityTotal = data.total || 0;
+                entityTotalPages = data.pages || 1;
+
+                document.getElementById('entityPaginationInfo').textContent =
+                    `共 ${entityTotal} 条，第 ${entityPage}/${entityTotalPages} 页`;
+                document.getElementById('entityPrevBtn').disabled = entityPage <= 1;
+                document.getElementById('entityNextBtn').disabled = entityPage >= entityTotalPages;
+
+                const entities = data.entities || [];
+                if (entities.length === 0) {
+                    body.innerHTML = '<div style="color:#888;text-align:center;padding:40px;">暂无节点</div>';
+                    return;
+                }
+
+                const typeColorMap = {
+                    concept: '#6c5ce7',
+                    technique: '#00b894',
+                    tool: '#fdcb6e',
+                    person: '#74b9ff',
+                    organization: '#a29bfe'
+                };
+
+                body.innerHTML = entities.map(e => `
+                    <div class="entity-row">
+                        <div class="entity-row-info" onclick="focusEntityFromModal('${e.id}')">
+                            <div class="entity-row-name">${escapeHtml(e.label || '')}</div>
+                            <div class="entity-row-meta">
+                                <span class="entity-row-badge" style="background:${typeColorMap[e.type] || '#888'}">${e.type || 'concept'}</span>
+                                ${e.category ? `<span class="entity-row-badge ${e.category === 'tech' ? 'badge-tech' : 'badge-finance'}">${e.category === 'tech' ? '技术' : '金融'}</span>` : ''}
+                                ${e.is_favorited ? '⭐' : ''}
+                            </div>
+                        </div>
+                        <div class="entity-row-stats">关联 ${e.connections || 0} · 卡片 ${e.deep_review_count || 0}</div>
+                        <div class="entity-row-actions">
+                            <button class="entity-action-btn ${e.is_favorited ? 'fav active' : ''}" onclick="event.stopPropagation();toggleEntityFavorite('${e.id}', ${e.is_favorited})" title="收藏">${e.is_favorited ? '⭐' : '☆'}</button>
+                            <button class="entity-action-btn delete" onclick="event.stopPropagation();deleteEntityFromModal('${e.id}')" title="删除">🗑</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error(e);
+                body.innerHTML = '<div style="color:#e17055;padding:20px;">加载失败: ' + e + '</div>';
+            }
+        }
+
+        function focusEntityFromModal(entityId) {
+            closeEntityModal();
+            focusOnNode(entityId);
+        }
+
+        async function toggleEntityFavorite(entityId, currentlyFavorited) {
+            try {
+                if (currentlyFavorited) {
+                    await fetch(`${API_BASE}/deep-review/entity/unfavorite`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ entity_id: entityId })
+                    });
+                } else {
+                    await fetch(`${API_BASE}/deep-review/entity/favorite`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ entity_id: entityId })
+                    });
+                }
+                await loadEntityList();
+            } catch (e) { console.error(e); }
+        }
+
+        async function deleteEntityFromModal(entityId) {
+            try {
+                const res = await fetch(`${API_BASE}/deep-review/entity/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ entity_id: entityId })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    await loadEntityList();
+                    loadGraph();
+                } else {
+                    alert('删除失败');
+                }
+            } catch (e) { alert('删除失败: ' + e); }
         }
 
         init();

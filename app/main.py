@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 
 from app.config import get_settings
 from app.core.database import db
-from app.api import notes, search, review, deep_review
+from app.api import notes, search, review, deep_review, entities, pdf_import
 
 settings = get_settings()
 
@@ -44,6 +44,8 @@ app.include_router(notes.router)
 app.include_router(search.router)
 app.include_router(review.router)
 app.include_router(deep_review.router)
+app.include_router(entities.router)
+app.include_router(pdf_import.router)
 
 
 @app.get("/")
